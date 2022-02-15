@@ -7,23 +7,35 @@
 
 constexpr auto FPS = 60;
 constexpr auto FRAME_DELAY = 1000 / FPS;
-constexpr auto MAX_AMPLITUDE = 32767.F * 2 + 1;
+
+constexpr auto MAX_AMPLITUDE = 32767.F;
+constexpr auto FREQUENCY = 48000;
+constexpr auto CHANNELS = 2;
+constexpr auto FORMAT = AUDIO_F32;
+constexpr auto SAMPLES = 1024;
+
+SDL_AudioCVT cvt;
 
 void cb(void* data, Uint8* stream, int len) {
     if (!stream) {
         return;
     }
 
-    auto stream16 = (Uint16*) stream;
-    auto len16 = len / (sizeof(Uint16) / sizeof(Uint8));
+    if (cvt.needed) {
+        memcpy(cvt.buf, stream, len);
+        SDL_ConvertAudio(&cvt);
+    }
 
-    auto max_sample = stream16[0];
-    for (int i = 0; i < len16; ++i) {
-        max_sample = MAX(max_sample, stream16[i]);
+    auto streamf32 = cvt.needed ? (float*)cvt.buf : (float*)stream;
+    auto len_final = cvt.needed ? cvt.len_cvt : len;
+    auto max_sample = -INFINITY;
+
+    for (int i = 0; i < len_final / 4; i += 4) {
+        max_sample = MAX(max_sample, streamf32[i] + streamf32[i + 1] + streamf32[i + 2] + streamf32[i + 3]);
     }
 
     auto db = 20 * log10(max_sample / MAX_AMPLITUDE);
-    printf("db is %f at %u\n", db, SDL_GetTicks());
+    printf("db is %f\n", db);
 }
 
 int main()
@@ -35,13 +47,17 @@ int main()
 
     SDL_AudioSpec want, have;
     SDL_zero(want);
-    SDL_zero(have);
-    want.freq = 44100;
-    want.format = AUDIO_U16SYS;
-    want.channels = 1;
-    want.samples = 1024;
+    want.freq = FREQUENCY;
+    want.format = FORMAT;
+    want.channels = CHANNELS;
+    want.samples = SAMPLES;
     want.callback = cb;
-    auto audio_device = SDL_OpenAudioDevice(SDL_GetAudioDeviceName(0, 1), 1, &want, &have, SDL_AUDIO_ALLOW_ANY_CHANGE);
+    auto audio_device = SDL_OpenAudioDevice(nullptr, 1, &want, &have, SDL_AUDIO_ALLOW_ANY_CHANGE);
+
+    SDL_BuildAudioCVT(&cvt, have.format, have.channels, have.freq, FORMAT, CHANNELS, FREQUENCY);
+    cvt.len = have.samples * have.channels * (SDL_AUDIO_BITSIZE(have.format) / 8);
+    cvt.buf = (Uint8*)SDL_malloc(cvt.len * cvt.len);
+
     SDL_PauseAudioDevice(audio_device, 0);
 
     bool close = false;
@@ -73,3 +89,4 @@ int main()
     SDL_Quit();
     return 0;
 }
+ 
